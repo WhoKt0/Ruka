@@ -80,32 +80,13 @@ class RobotArmEnv(gym.Env):
 
         self.frame_buffer: Deque[np.ndarray] = deque(maxlen=self.frame_stack)
         self.num_joints = 7
-        self._down_orientation = p.getQuaternionFromEuler([math.pi, 0.0, 0.0])
-        self._rest_pose = [
-            0.0,
-            -math.pi / 4,
-            0.0,
-            -3 * math.pi / 4,
-            0.0,
-            math.pi / 2,
-            0.0,
-        ]
         self.action_space = gym.spaces.Box(
-            low=np.array([-0.03, -0.03, -0.03], dtype=np.float32),
-            high=np.array([0.03, 0.03, 0.03], dtype=np.float32),
+            low=np.array([-0.01, -0.01, -0.01], dtype=np.float32),
+            high=np.array([0.01, 0.01, 0.01], dtype=np.float32),
             dtype=np.float32,
         )
 
-        # The stacked observation always follows a channel-first layout.
-        if self.image_grayscale:
-            image_shape = (self.frame_stack, self.camera.height, self.camera.width)
-        else:
-            # RGB frames are concatenated along the channel axis: (T*3, H, W)
-            image_shape = (
-                self.frame_stack * 3,
-                self.camera.height,
-                self.camera.width,
-            )
+        image_shape = (self.frame_stack, self.camera.height, self.camera.width)
         self.observation_space = gym.spaces.Dict(
             {
                 "image": gym.spaces.Box(
@@ -144,20 +125,8 @@ class RobotArmEnv(gym.Env):
             useFixedBase=True,
         )
 
-        for j, angle in enumerate(self._rest_pose):
-            p.resetJointState(self.robot_uid, j, angle)
-
-        # Lift the arm above the table with a downward-facing wrist
-        ik_pose = p.calculateInverseKinematics(
-            self.robot_uid,
-            6,
-            targetPosition=[0.55, 0.0, 0.35],
-            targetOrientation=self._down_orientation,
-        )
-        for idx, angle in enumerate(ik_pose):
-            if idx >= self.num_joints:
-                break
-            p.resetJointState(self.robot_uid, idx, angle)
+        for j in range(p.getNumJoints(self.robot_uid)):
+            p.resetJointState(self.robot_uid, j, 0.0)
 
         obj_x = self._rng.uniform(*self.workspace_limits[0])
         obj_y = self._rng.uniform(*self.workspace_limits[1])
@@ -179,15 +148,12 @@ class RobotArmEnv(gym.Env):
         min_xyz, max_xyz = zip(*self.workspace_limits)
         target_pos = np.clip(target_pos, min_xyz, max_xyz)
 
+        target_orn = p.getQuaternionFromEuler([0, math.pi, 0])
         joint_positions = p.calculateInverseKinematics(
             self.robot_uid,
             6,
             target_pos,
-            targetOrientation=self._down_orientation,
-            lowerLimits=[-2 * math.pi] * self.num_joints,
-            upperLimits=[2 * math.pi] * self.num_joints,
-            jointRanges=[4 * math.pi] * self.num_joints,
-            restPoses=self._rest_pose,
+            targetOrientation=target_orn,
             maxNumIterations=100,
             residualThreshold=1e-4,
         )
@@ -254,11 +220,7 @@ class RobotArmEnv(gym.Env):
             for _ in range(self.frame_stack):
                 self.frame_buffer.append(frame)
 
-        if self.image_grayscale:
-            stacked = np.stack(list(self.frame_buffer), axis=0)
-        else:
-            frames_chw = [np.transpose(f, (2, 0, 1)) for f in self.frame_buffer]
-            stacked = np.concatenate(frames_chw, axis=0)
+        stacked = np.stack(list(self.frame_buffer), axis=0)
         joint_states = np.array(
             [p.getJointState(self.robot_uid, i)[0] for i in range(self.num_joints)],
             dtype=np.float32,

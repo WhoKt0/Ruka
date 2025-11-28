@@ -7,27 +7,10 @@ from stable_baselines3.common.torch_layers import BaseFeaturesExtractor
 from torchvision import models
 
 
-def _prepare_image_channels(x: torch.Tensor, target_channels: int = 3) -> torch.Tensor:
-    """Collapse stacked frames to a 3-channel tensor for pretrained backbones."""
-
-    if x.dim() == 5:
-        # Handle (n_envs, n_stack, c, h, w)
-        x = x.flatten(0, 1)
-
-    channels = x.shape[1]
-
-    # If channels are a multiple of 3, interpret as stacked RGB frames
-    if channels % 3 == 0 and channels > target_channels:
-        n_frames = channels // 3
-        x = x.view(x.shape[0], n_frames, 3, x.shape[2], x.shape[3])
-        x = x.mean(dim=1)
-    elif channels == 1:
-        x = x.repeat(1, target_channels, 1, 1)
-    elif channels != target_channels:
-        # Generic fallback: average across channels then repeat
-        x = x.mean(dim=1, keepdim=True).repeat(1, target_channels, 1, 1)
-
-    return x
+def _repeat_channels(x: torch.Tensor, target_channels: int = 3) -> torch.Tensor:
+    if x.shape[1] == target_channels:
+        return x
+    return x.repeat(1, target_channels, 1, 1)
 
 
 class MobileNetFeatureExtractor(BaseFeaturesExtractor):
@@ -55,9 +38,8 @@ class MobileNetFeatureExtractor(BaseFeaturesExtractor):
 
     def forward(self, observations: dict) -> torch.Tensor:
         image = observations["image"].float() / 255.0
-        if image.dim() == 3:
-            image = image.unsqueeze(0)
-
-        image = _prepare_image_channels(image, 3)
+        if image.dim() == 5:  # (n_envs, stacks, h, w)
+            image = image
+        image = _repeat_channels(image, 3)
         feats = self.backbone(image)
         return self.projector(feats)
